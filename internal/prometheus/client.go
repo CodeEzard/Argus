@@ -7,94 +7,104 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
-// Client holds config for talking to a Prometheus instance.
-// Structs in Go = named collection of fields, like an object in other languages.
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
 }
 
-// NewClient constructs a Client. Convention in Go: constructors are named NewXxx.
 func NewClient(baseURL string) *Client {
 	return &Client{
-		BaseURL:    baseURL,
-		HTTPClient: &http.Client{},
+		BaseURL: baseURL,
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
 	}
 }
 
-// These structs mirror the JSON shape Prometheus returns.
-// `json:"field"` tells the decoder which JSON key maps to which struct field.
-type queryResponse struct {
-	Status string    `json:"status"`
-	Data   queryData `json:"data"`
+type QueryResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string   `json:"resultType"`
+		Result     []Result `json:"result"`
+	} `json:"data"`
 }
 
-type queryData struct {
-	ResultType string        `json:"resultType"`
-	Result     []queryResult `json:"result"`
+type Result struct {
+	Metric map[string]string `json:"metric"`
+	Value  []interface{}     `json:"value"`
 }
 
-type queryResult struct {
-	Metric map[string]string `json:"metric"` // labels e.g. {"job": "prometheus"}
-	Value  [2]interface{}    `json:"value"`  // [timestamp, "value_as_string"]
+// MetricSample is our clean internal representation
+type MetricSample struct {
+	Labels    map[string]string
+	Value     float64
+	Timestamp time.Time
 }
 
-// MetricResult is the clean type we expose outside this package.
-type MetricResult struct {
-	Labels map[string]string
-	Value  float64
-}
-
-// Query runs a PromQL instant query and returns parsed results.
-// Notice the Go error pattern: always return (value, error). Always check error.
-func (c *Client) Query(promql string) ([]MetricResult, error) {
-	// Build the URL with the query as a query param
+func (c *Client) Query(promql string) ([]MetricSample, error) {
 	endpoint := fmt.Sprintf("%s/api/v1/query", c.BaseURL)
 	params := url.Values{}
 	params.Set("query", promql)
 	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
 
-	// Make the HTTP GET request
 	resp, err := c.HTTPClient.Get(fullURL)
 	if err != nil {
-		// Wrap the error with context — makes debugging much easier
 		return nil, fmt.Errorf("failed to reach Prometheus at %s: %w", c.BaseURL, err)
 	}
-	defer resp.Body.Close() // always close the body — this is Go idiom
+	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	var parsed queryResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	var qr QueryResponse
+	if err := json.Unmarshal(body, &qr); err != nil {
 		return nil, fmt.Errorf("failed to parse Prometheus response: %w", err)
 	}
 
-	if parsed.Status != "success" {
-		return nil, fmt.Errorf("Prometheus returned non-success status: %s", parsed.Status)
+	if qr.Status != "success" {
+		return nil, fmt.Errorf("prometheus returned non-success status: %s", qr.Status)
 	}
 
-	// Convert raw results into our clean MetricResult type
-	results := make([]MetricResult, 0, len(parsed.Data.Result))
-	for _, r := range parsed.Data.Result {
-		// Value[1] is the metric value as a string — parse it to float64
-		valStr, ok := r.Value[1].(string)
-		if !ok {
-			continue
-		}
-		val, err := strconv.ParseFloat(valStr, 64)
+	samples := make([]MetricSample, 0, len(qr.Data.Result))
+	for _, r := range qr.Data.Result {
+		sample, err := parseResult(r)
 		if err != nil {
 			continue
 		}
-		results = append(results, MetricResult{
-			Labels: r.Metric,
-			Value:  val,
-		})
+		samples = append(samples, sample)
 	}
 
-	return results, nil
+	return samples, nil
+}
+
+func parseResult(r Result) (MetricSample, error) {
+	if len(r.Value) != 2 {
+		return MetricSample{}, fmt.Errorf("unexpected value length: %d", len(r.Value))
+	}
+
+	tsFloat, ok := r.Value[0].(float64)
+	if !ok {
+		return MetricSample{}, fmt.Errorf("timestamp is not a float64")
+	}
+
+	valStr, ok := r.Value[1].(string)
+	if !ok {
+		return MetricSample{}, fmt.Errorf("value is not a string")
+	}
+
+	val, err := strconv.ParseFloat(valStr, 64)
+	if err != nil {
+		return MetricSample{}, fmt.Errorf("failed to parse value %q: %w", valStr, err)
+	}
+
+	return MetricSample{
+		Labels:    r.Metric,
+		Value:     val,
+		Timestamp: time.Unix(int64(tsFloat), 0),
+	}, nil
 }
