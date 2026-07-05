@@ -1,77 +1,111 @@
 package detector
 
 import (
-	"fmt"
-
-	"github.com/codeezard/argus/internal/prometheus"
+	"math"
 )
 
-// Anomaly represents a detected problem
+// Anomaly represents a detected problem in a metric.
 type Anomaly struct {
 	MetricName string
 	Value      float64
-	Threshold  float64
-	Message    string
-	Severity   string // "warn" or "critical"
+	ZScore     float64  // how many standard deviations away from normal
+	Severity   string   // "low", "medium", "high"
 }
 
-// Rule defines what to check and when to fire
-type Rule struct {
-	Name      string
-	Query     string  // PromQL query to run
-	Threshold float64 // fire if value exceeds this
-	Severity  string
-}
-
-// DefaultRules are the built-in rules Argus ships with
-var DefaultRules = []Rule{
-	{
-		Name:      "High CPU usage",
-		Query:     `rate(process_cpu_seconds_total[1m])`,
-		Threshold: 0.8,
-		Severity:  "warn",
-	},
-	{
-		Name:      "Prometheus scrape failures",
-		Query:     `rate(prometheus_target_scrape_pool_exceeded_target_limit_total[5m])`,
-		Threshold: 0,
-		Severity:  "warn",
-	},
-	{
-    	Name:      "High memory usage",
-    	Query:     `(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100`,
-    	Threshold: 80.0,
-    	Severity:  "warn",
-	},
-}
-
-// Detector runs rules against metric samples and returns anomalies
+// Detector holds a rolling window of past values for a metric.
+// This is how we establish "what's normal" without any external config.
 type Detector struct {
-	rules []Rule
+	// map of metric name -> ring buffer of recent values
+	history map[string][]float64
+	// how many data points to keep per metric
+	windowSize int
 }
 
-func New(rules []Rule) *Detector {
-	return &Detector{rules: rules}
+// NewDetector creates a Detector with a given window size.
+// A window of 60 means we remember the last 60 readings to define "normal".
+func NewDetector(windowSize int) *Detector {
+	return &Detector{
+		history:    make(map[string][]float64),
+		windowSize: windowSize,
+	}
 }
 
-// Check takes samples for a single rule and returns anomalies if threshold exceeded
-func (d *Detector) Check(rule Rule, samples []prometheus.MetricSample) []Anomaly {
-	var anomalies []Anomaly
+// Observe records a new value for a metric. Call this every poll cycle.
+func (d *Detector) Observe(metricName string, value float64) {
+	buf := d.history[metricName]
+	buf = append(buf, value)
 
-	for _, s := range samples {
-		if s.Value > rule.Threshold {
-			anomalies = append(anomalies, Anomaly{
-				MetricName: rule.Name,
-				Value:      s.Value,
-				Threshold:  rule.Threshold,
-				Severity:   rule.Severity,
-				Message: fmt.Sprintf(
-					"%s — current value %.4f exceeds threshold %.4f",
-					rule.Name, s.Value, rule.Threshold,
-				),
-			})
-		}
+	// Keep only the last windowSize values — sliding window
+	if len(buf) > d.windowSize {
+		buf = buf[len(buf)-d.windowSize:]
+	}
+	d.history[metricName] = buf
+}
+
+// Check returns an Anomaly if the latest value is unusual, or nil if normal.
+// We need at least 10 data points before we can say anything meaningful.
+func (d *Detector) Check(metricName string, currentValue float64) *Anomaly {
+	buf := d.history[metricName]
+	if len(buf) < 10 {
+		return nil // not enough history yet
 	}
 
-	return anomalies
+	mean, stddev := stats(buf)
+
+	// Avoid division by zero — if stddev is tiny, the metric is flat (stable)
+	if stddev < 0.0001 {
+		return nil
+	}
+
+	// Z-score: how many standard deviations is this value from the mean?
+	// z = (value - mean) / stddev
+	zScore := math.Abs((currentValue - mean) / stddev)
+
+	// Only flag if it's more than 2.5 standard deviations away
+	if zScore < 2.5 {
+		return nil
+	}
+
+	return &Anomaly{
+		MetricName: metricName,
+		Value:      currentValue,
+		ZScore:     zScore,
+		Severity:   severity(zScore),
+	}
 }
+
+// severity maps a z-score to a human-readable level
+func severity(z float64) string {
+	switch {
+	case z >= 4.0:
+		return "high"
+	case z >= 3.0:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// stats computes mean and standard deviation of a slice of float64.
+// This is the math behind z-score detection — nothing exotic.
+func stats(values []float64) (mean, stddev float64) {
+	n := float64(len(values))
+
+	// compute mean
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	mean = sum / n
+
+	// compute standard deviation
+	variance := 0.0
+	for _, v := range values {
+		diff := v - mean
+		variance += diff * diff
+	}
+	stddev = math.Sqrt(variance / n)
+
+	return mean, stddev
+}
+

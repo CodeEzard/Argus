@@ -16,6 +16,11 @@ var scanCmd = &cobra.Command{
 	RunE:  runScan,
 }
 
+var queries = []string{
+    `rate(process_cpu_seconds_total[1m])`,
+    `rate(prometheus_target_scrape_pool_exceeded_target_limit_total[5m])`,
+}
+
 func init() {
 	rootCmd.AddCommand(scanCmd)
 }
@@ -26,36 +31,38 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n🔍 Argus scanning %s...\n\n", host)
 
-	d := detector.New(detector.DefaultRules)
+	d := detector.NewDetector(60)
 	anomaliesFound := false
 
-	for _, rule := range detector.DefaultRules {
-		fmt.Printf("  Checking: %s\n", rule.Name)
+	for _, query := range queries {
+    	fmt.Printf("  Checking: %s\n", query)
 
-		samples, err := client.Query(rule.Query)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  ⚠️  Failed to query '%s': %v\n", rule.Name, err)
-			continue
-		}
+    	samples, err := client.Query(query)
+    	if err != nil {
+    	    fmt.Fprintf(os.Stderr, "  ⚠️  Failed to query: %v\n", err)
+    	    continue
+    	}
 
-		if len(samples) == 0 {
-			fmt.Printf("  –  No data returned\n")
-			continue
-		}
+    	if len(samples) == 0 {
+    	    fmt.Printf("  –  No data returned\n")
+    	    continue
+    	}
 
-		anomalies := d.Check(rule, samples)
+    	value := samples[0].Value
 
-		if len(anomalies) == 0 {
-			fmt.Printf("  ✓  OK (value: %.4f)\n", samples[0].Value)
-		} else {
-			for _, a := range anomalies {
-				fmt.Printf("  ⚠️  ANOMALY: %s\n", a.Message)
-				fmt.Printf("     Severity : %s\n", a.Severity)
-				fmt.Printf("     Value    : %.4f\n", a.Value)
-				fmt.Printf("     Threshold: %.4f\n", a.Threshold)
-				anomaliesFound = true
-			}
-		}
+    	d.Observe(query, value)
+    	anomaly := d.Check(query, value)
+
+    	if anomaly == nil {
+    	    fmt.Printf("  ✓  OK (value: %.4f)\n", value)
+    	} else {
+    	    fmt.Printf("  ⚠️  ANOMALY detected\n")
+    	    fmt.Printf("     Metric  : %s\n", anomaly.MetricName)
+    	    fmt.Printf("     Value   : %.4f\n", anomaly.Value)
+    	    fmt.Printf("     Z-Score : %.4f\n", anomaly.ZScore)
+    	    fmt.Printf("     Severity: %s\n", anomaly.Severity)
+    	    anomaliesFound = true
+    	}
 	}
 
 	fmt.Println()
