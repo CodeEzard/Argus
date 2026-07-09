@@ -3,6 +3,7 @@ package sysinfo
 import (
 	"fmt"
 	"strings"
+	"sort"
 )
 
 func BuildPrompt(snap ContextSnapshot) string {
@@ -17,19 +18,25 @@ func BuildPrompt(snap ContextSnapshot) string {
 	fmt.Fprintf(&b, "  Severity : %s\n\n", snap.TriggerAnomaly.Severity)
 
 	// Section 2 — correlated metrics
-	for i, metric := range snap.CorrelatedMetrics {
-		fmt.Fprintf(&b, "Metric %d: %s %.4f %.2f %s\n",
-			i,
-			metric.Name,
-			metric.CurrentValue,
-			metric.ZScore,
-			metric.Severity,
-		)
+	fmt.Fprintf(&b, "CORRELATED ANOMALIES (sorted by detection time):\n")
+	sort.Slice(snap.CorrelatedMetrics, func(i, j int) bool {
+    	return snap.CorrelatedMetrics[i].DetectedAt.Before(snap.CorrelatedMetrics[j].DetectedAt)
+	})
+	for _, metric := range snap.CorrelatedMetrics {
+	    fmt.Fprintf(&b, "  - %s | value: %.4f | z-score: %.2f | severity: %s | detected: %s\n",
+	        metric.Name,
+	        metric.CurrentValue,
+    	    metric.ZScore,
+        	metric.Severity,
+        	metric.DetectedAt.Format("15:04:05"),
+    	)
 	}
+	fmt.Fprintf(&b, "\n")
 
 	// Section 3 — running processes
-	for i, process := range snap.SystemInfo.Processes {
-		fmt.Fprintf(&b, "Process %d: %s\n", i, process)
+	fmt.Fprintf(&b, "RUNNING SERVICES:\n")
+	for _, process := range snap.SystemInfo.Processes {
+		fmt.Fprintf(&b, "Process %d: %s\n", process)
 	}
 
 	// Section 4 — instruction
