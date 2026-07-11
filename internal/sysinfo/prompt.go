@@ -40,8 +40,10 @@ func BuildPrompt(snap ContextSnapshot) string {
 	}
 
 	// Section 4 — instruction
-	fmt.Fprintf(&b, "Respond ONLY in this JSON format:\n")
-	fmt.Fprintf(&b, `{"severity":"...","diagnosis":"...","commands":["..."],"long_term_fix":"...","confidence":0.0}`)
+	fmt.Fprintf(&b, "IMPORTANT: Respond with ONLY a JSON object. No markdown, no backticks, no extra text.\n")
+	fmt.Fprintf(&b, "The JSON must have exactly these fields with exactly these types:\n")
+	fmt.Fprintf(&b, `{"severity":"string","diagnosis":"string","commands":["string","string"],"long_term_fix":"string","confidence":0.0}`)
+	fmt.Fprintf(&b, "\ncommands must be a flat array of strings. long_term_fix must be a plain string.\n")
 
 	return b.String()
 }

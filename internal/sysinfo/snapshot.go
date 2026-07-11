@@ -26,9 +26,9 @@ type SystemInfo struct {
 }
 
 type Suggestion struct {
-    Severity    string
-    Diagnosis   string
-    Commands    []string
-    LongTermFix string
-    Confidence  float64
+    Severity    string   `json:"severity"`
+    Diagnosis   string   `json:"diagnosis"`
+    Commands    []string `json:"commands"`
+    LongTermFix string   `json:"long_term_fix"`
+    Confidence  float64  `json:"confidence"`
 }

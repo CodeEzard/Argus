@@ -34,12 +34,40 @@ func (c *Client) Diagnose(snap sysinfo.ContextSnapshot) (sysinfo.Suggestion, err
 		return sysinfo.Suggestion{}, err
 	}
 
-	var suggestion sysinfo.Suggestion
-	if err := json.Unmarshal([]byte(response), &suggestion); err != nil {
+	type rawSuggestion struct {
+		Severity    string          `json:"severity"`
+		Diagnosis   string          `json:"diagnosis"`
+		Commands    json.RawMessage `json:"commands"`
+		LongTermFix json.RawMessage `json:"long_term_fix"`
+		Confidence  float64         `json:"confidence"`
+	}
+
+	var raw rawSuggestion
+	if err := json.Unmarshal([]byte(response), &raw); err != nil {
 		return sysinfo.Suggestion{}, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 
-	return suggestion, nil
+	var commands []string
+	if err := json.Unmarshal(raw.Commands, &commands); err != nil {
+		var single string
+		if err := json.Unmarshal(raw.Commands, &single); err == nil {
+			commands = []string{single}
+		}
+	}
+
+	var longTermFix string
+	if err := json.Unmarshal(raw.LongTermFix, &longTermFix); err != nil {
+		longTermFix = string(raw.LongTermFix)
+	}
+
+	return sysinfo.Suggestion{
+		Severity:    raw.Severity,
+		Diagnosis:   raw.Diagnosis,
+		Commands:    commands,
+		LongTermFix: longTermFix,
+		Confidence:  raw.Confidence,
+	}, nil
+
 }
 
 // OllamaProvider calls a local Ollama instance.
@@ -96,6 +124,8 @@ func (o *OllamaProvider) Complete(prompt string) (string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("failed to decode ollama response: %w", err)
 	}
+
+	fmt.Println("DEBUG RAW:", result.Response)
 
 	return result.Response, nil
 }

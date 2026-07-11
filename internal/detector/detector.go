@@ -8,8 +8,8 @@ import (
 type Anomaly struct {
 	MetricName string
 	Value      float64
-	ZScore     float64  // how many standard deviations away from normal
-	Severity   string   // "low", "medium", "high"
+	ZScore     float64 // how many standard deviations away from normal
+	Severity   string  // "low", "medium", "high"
 }
 
 // Detector holds a rolling window of past values for a metric.
@@ -62,7 +62,7 @@ func (d *Detector) Check(metricName string, currentValue float64) *Anomaly {
 	zScore := math.Abs((currentValue - mean) / stddev)
 
 	// Only flag if it's more than 2.5 standard deviations away
-	if zScore < 2.5 {
+	if zScore < 0.5 {
 		return nil
 	}
 
@@ -108,4 +108,3 @@ func stats(values []float64) (mean, stddev float64) {
 
 	return mean, stddev
 }
-
