@@ -8,6 +8,7 @@ import (
 	"github.com/codeezard/argus/internal/detector"
 	"github.com/codeezard/argus/internal/llm"
 	prom "github.com/codeezard/argus/internal/prometheus"
+	"github.com/codeezard/argus/internal/store"
 	"github.com/codeezard/argus/internal/sysinfo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -28,6 +29,16 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	host := viper.GetString("prometheus.host")
 	client := prom.NewClient(host)
 	interval, _ := cmd.Flags().GetInt("interval")
+
+	// Initialize store
+	dbPath := viper.GetString("store.path")
+	if dbPath == "" {
+		dbPath = "argus.db"
+	}
+	dbStore, err := store.New(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to initialize store: %w", err)
+	}
 
 	fmt.Printf("\n👁  Argus watching %s (every %ds)...\n\n", host, interval)
 
@@ -61,6 +72,31 @@ func runWatch(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Printf("  🔧 Long term  : %s\n", suggestion.LongTermFix)
 			fmt.Printf("  📊 Confidence : %.0f%%\n", suggestion.Confidence*100)
+
+			// Store the simulated anomaly event
+			evt := &store.Event{
+				Timestamp:  trigger.DetectedAt.Format(time.RFC3339),
+				Metric:     trigger.Name,
+				Value:      trigger.CurrentValue,
+				ZScore:     trigger.ZScore,
+				Severity:   suggestion.Severity,
+				Diagnosis:  suggestion.Diagnosis,
+				Commands:   suggestion.Commands,
+				Fix:        suggestion.LongTermFix,
+				Confidence: suggestion.Confidence,
+			}
+			if err := dbStore.Save(evt); err != nil {
+				fmt.Printf("  💾 DB save error (simulated): %v\n", err)
+			} else {
+				fmt.Printf("  💾 Stored simulated anomaly (ID: %d)\n", evt.ID)
+				// Retrieve with GetById
+				savedEvt, err := dbStore.GetById(evt.ID)
+				if err != nil {
+					fmt.Printf("  ⚠️  Failed to retrieve simulated anomaly: %v\n", err)
+				} else {
+					fmt.Printf("  ✓  Verified: Retrieved simulated anomaly %d from DB (metric: %s)\n", savedEvt.ID, savedEvt.Metric)
+				}
+			}
 		}
 
 		// your query loop here — same as scan.go
@@ -117,6 +153,31 @@ func runWatch(cmd *cobra.Command, args []string) error {
 					}
 					fmt.Printf("     Long term  : %s\n", suggestion.LongTermFix)
 					fmt.Printf("     Confidence : %.0f%%\n", suggestion.Confidence*100)
+
+					// Step 4 — Store anomaly
+					evt := &store.Event{
+						Timestamp:  trigger.DetectedAt.Format(time.RFC3339),
+						Metric:     anomaly.MetricName,
+						Value:      anomaly.Value,
+						ZScore:     anomaly.ZScore,
+						Severity:   suggestion.Severity,
+						Diagnosis:  suggestion.Diagnosis,
+						Commands:   suggestion.Commands,
+						Fix:        suggestion.LongTermFix,
+						Confidence: suggestion.Confidence,
+					}
+					if err := dbStore.Save(evt); err != nil {
+						fmt.Printf("     💾 DB save error: %v\n", err)
+					} else {
+						fmt.Printf("     💾 Stored anomaly in DB with ID: %d\n", evt.ID)
+						// Retrieve with GetById
+						savedEvt, err := dbStore.GetById(evt.ID)
+						if err != nil {
+							fmt.Printf("     ⚠️  Failed to retrieve saved anomaly: %v\n", err)
+						} else {
+							fmt.Printf("     ✓  Verified: Retrieved saved anomaly %d from DB (metric: %s)\n", savedEvt.ID, savedEvt.Metric)
+						}
+					}
 				}
 			}
 		}

@@ -3,12 +3,13 @@ module github.com/codeezard/argus
 go 1.25.0
 
 require (
-	github.com/fatih/color v1.19.0
+	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 )
 
 require (
+	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
