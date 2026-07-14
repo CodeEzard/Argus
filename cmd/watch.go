@@ -49,56 +49,6 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		fmt.Printf("── %s ──\n", time.Now().Format("15:04:05"))
 		fmt.Printf("── %s ──\n", time.Now().Format("15:04:05"))
 
-		// TEMPORARY: simulate an anomaly to test LLM pipeline
-		// delete this block after testing
-		trigger := sysinfo.AnomalousMetric{
-			Name:         "rate(process_cpu_seconds_total[1m])",
-			CurrentValue: 0.95,
-			ZScore:       3.8,
-			Severity:     "high",
-			DetectedAt:   time.Now(),
-		}
-		snap := sysinfo.Collect(trigger, []sysinfo.AnomalousMetric{})
-		provider := &llm.OllamaProvider{Model: "llama3.2:3b"}
-		llmClient := llm.NewClient(provider)
-		suggestion, err := llmClient.Diagnose(snap)
-		if err != nil {
-			fmt.Printf("  LLM error: %v\n", err)
-		} else {
-			fmt.Printf("  🚨 Diagnosis  : %s\n", suggestion.Diagnosis)
-			fmt.Printf("  💊 Commands   :\n")
-			for _, cmd := range suggestion.Commands {
-				fmt.Printf("       $ %s\n", cmd)
-			}
-			fmt.Printf("  🔧 Long term  : %s\n", suggestion.LongTermFix)
-			fmt.Printf("  📊 Confidence : %.0f%%\n", suggestion.Confidence*100)
-
-			// Store the simulated anomaly event
-			evt := &store.Event{
-				Timestamp:  trigger.DetectedAt.Format(time.RFC3339),
-				Metric:     trigger.Name,
-				Value:      trigger.CurrentValue,
-				ZScore:     trigger.ZScore,
-				Severity:   suggestion.Severity,
-				Diagnosis:  suggestion.Diagnosis,
-				Commands:   suggestion.Commands,
-				Fix:        suggestion.LongTermFix,
-				Confidence: suggestion.Confidence,
-			}
-			if err := dbStore.Save(evt); err != nil {
-				fmt.Printf("  💾 DB save error (simulated): %v\n", err)
-			} else {
-				fmt.Printf("  💾 Stored simulated anomaly (ID: %d)\n", evt.ID)
-				// Retrieve with GetById
-				savedEvt, err := dbStore.GetById(evt.ID)
-				if err != nil {
-					fmt.Printf("  ⚠️  Failed to retrieve simulated anomaly: %v\n", err)
-				} else {
-					fmt.Printf("  ✓  Verified: Retrieved simulated anomaly %d from DB (metric: %s)\n", savedEvt.ID, savedEvt.Metric)
-				}
-			}
-		}
-
 		// your query loop here — same as scan.go
 		// but use d.Observe and d.Check
 		for _, query := range queries {
