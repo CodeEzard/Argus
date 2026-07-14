@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/codeezard/argus/internal/sysinfo"
@@ -33,6 +34,8 @@ func (c *Client) Diagnose(snap sysinfo.ContextSnapshot) (sysinfo.Suggestion, err
 	if err != nil {
 		return sysinfo.Suggestion{}, err
 	}
+
+	response = extractJSON(response)
 
 	type rawSuggestion struct {
 		Severity    string          `json:"severity"`
@@ -125,7 +128,14 @@ func (o *OllamaProvider) Complete(prompt string) (string, error) {
 		return "", fmt.Errorf("failed to decode ollama response: %w", err)
 	}
 
-	fmt.Println("DEBUG RAW:", result.Response)
-
 	return result.Response, nil
+}
+
+func extractJSON(s string) string {
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start == -1 || end == -1 || end < start {
+		return s
+	}
+	return s[start : end+1]
 }

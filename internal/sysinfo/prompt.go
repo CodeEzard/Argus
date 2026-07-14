@@ -34,10 +34,12 @@ func BuildPrompt(snap ContextSnapshot) string {
 	fmt.Fprintf(&b, "\n")
 
 	// Section 3 — running processes
-	fmt.Fprintf(&b, "RUNNING SERVICES:\n")
+	fmt.Fprintf(&b, "RUNNING SERVICES (Docker containers):\n")
 	for _, process := range snap.SystemInfo.Processes {
-		fmt.Fprintf(&b, "Process %d: %s\n", process)
+    	fmt.Fprintf(&b, "  - %s (Docker container, currently running)\n", process)
 	}
+	fmt.Fprintf(&b, "\n")
+	fmt.Fprintf(&b, "NOTE: These are Docker containers, not systemd services. Do not suggest systemctl commands for them.\n\n")
 
 	// Section 4 — instruction
 	fmt.Fprintf(&b, "IMPORTANT: Respond with ONLY a JSON object. No markdown, no backticks, no extra text.\n")
