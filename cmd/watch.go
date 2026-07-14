@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/codeezard/argus/internal/detector"
@@ -10,6 +10,7 @@ import (
 	prom "github.com/codeezard/argus/internal/prometheus"
 	"github.com/codeezard/argus/internal/store"
 	"github.com/codeezard/argus/internal/sysinfo"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -46,93 +47,110 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 
 	for range ticker.C {
-		fmt.Printf("── %s ──\n", time.Now().Format("15:04:05"))
-		fmt.Printf("── %s ──\n", time.Now().Format("15:04:05"))
+		// single timestamp line
+		ts := time.Now().Format("15:04:05")
+		separator := strings.Repeat("─", 35)
+		fmt.Printf("\n%s %s %s\n\n", separator, ts, separator)
 
-		// your query loop here — same as scan.go
-		// but use d.Observe and d.Check
-		for _, query := range queries {
-			fmt.Printf("  Checking: %s\n", query)
-
-			samples, err := client.Query(query)
+		for _, q := range queries {
+			samples, err := client.Query(q.PromQL)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  ⚠️  Failed to query: %v\n", err)
+				fmt.Printf("  ⚠️  %-20s  error: %v\n", q.Name, err)
 				continue
 			}
 
 			if len(samples) == 0 {
-				fmt.Printf("  –  No data returned\n")
+				fmt.Printf("  –  %-20s  no data\n", q.Name)
 				continue
 			}
 
 			value := samples[0].Value
-
-			d.Observe(query, value)
-			anomaly := d.Check(query, value)
+			d.Observe(q.PromQL, value)
+			anomaly := d.Check(q.PromQL, value)
 
 			if anomaly == nil {
-				fmt.Printf("  ✓  OK (value: %.4f)\n", value)
+				fmt.Printf("  %s  %-20s  %.2f%%\n",
+					color.GreenString("✓"),
+					q.Name,
+					value,
+				)
+				continue
+			}
+
+			// anomaly line
+			fmt.Printf("  %s  %-20s  %.2f%%    %s\n",
+				color.RedString("✗"),
+				color.RedString(q.Name),
+				value,
+				color.YellowString("[ANOMALY — z-score: %.2f]", anomaly.ZScore),
+			)
+
+			// call LLM
+			trigger := sysinfo.AnomalousMetric{
+				Name:         q.Name,
+				CurrentValue: value,
+				ZScore:       anomaly.ZScore,
+				Severity:     anomaly.Severity,
+				DetectedAt:   time.Now(),
+			}
+			snap := sysinfo.Collect(trigger, []sysinfo.AnomalousMetric{})
+			provider := &llm.OllamaProvider{Model: "llama3.2:3b"}
+			llmClient := llm.NewClient(provider)
+			suggestion, err := llmClient.Diagnose(snap)
+
+			if err != nil {
+				fmt.Printf("\n  %s Could not get LLM diagnosis: %v\n\n", color.YellowString("⚠️ "), err)
 			} else {
-				// Step 1 — build context snapshot
-				trigger := sysinfo.AnomalousMetric{
-					Name:         anomaly.MetricName,
-					CurrentValue: anomaly.Value,
-					ZScore:       anomaly.ZScore,
-					Severity:     anomaly.Severity,
-					DetectedAt:   time.Now(),
-				}
-				snap := sysinfo.Collect(trigger, []sysinfo.AnomalousMetric{})
-
-				// Step 2 — call LLM
-				provider := &llm.OllamaProvider{Model: "llama3.2:3b"}
-				llmClient := llm.NewClient(provider)
-				suggestion, err := llmClient.Diagnose(snap)
-				if err != nil {
-					fmt.Printf("  ⚠️  ANOMALY detected (LLM unavailable: %v)\n", err)
-					fmt.Printf("     Metric  : %s\n", anomaly.MetricName)
-					fmt.Printf("     Value   : %.4f\n", anomaly.Value)
-					fmt.Printf("     Z-Score : %.4f\n", anomaly.ZScore)
-				} else {
-					// Step 3 — print suggestion
-					fmt.Printf("  🚨 ANOMALY: %s\n", anomaly.MetricName)
-					fmt.Printf("     Severity   : %s\n", suggestion.Severity)
-					fmt.Printf("     Diagnosis  : %s\n", suggestion.Diagnosis)
-					fmt.Printf("     Commands   :\n")
-					for _, cmd := range suggestion.Commands {
-						fmt.Printf("       $ %s\n", cmd)
-					}
-					fmt.Printf("     Long term  : %s\n", suggestion.LongTermFix)
-					fmt.Printf("     Confidence : %.0f%%\n", suggestion.Confidence*100)
-
-					// Step 4 — Store anomaly
-					evt := &store.Event{
-						Timestamp:  trigger.DetectedAt.Format(time.RFC3339),
-						Metric:     anomaly.MetricName,
-						Value:      anomaly.Value,
-						ZScore:     anomaly.ZScore,
-						Severity:   suggestion.Severity,
-						Diagnosis:  suggestion.Diagnosis,
-						Commands:   suggestion.Commands,
-						Fix:        suggestion.LongTermFix,
-						Confidence: suggestion.Confidence,
-					}
-					if err := dbStore.Save(evt); err != nil {
-						fmt.Printf("     💾 DB save error: %v\n", err)
-					} else {
-						fmt.Printf("     💾 Stored anomaly in DB with ID: %d\n", evt.ID)
-						// Retrieve with GetById
-						savedEvt, err := dbStore.GetById(evt.ID)
-						if err != nil {
-							fmt.Printf("     ⚠️  Failed to retrieve saved anomaly: %v\n", err)
-						} else {
-							fmt.Printf("     ✓  Verified: Retrieved saved anomaly %d from DB (metric: %s)\n", savedEvt.ID, savedEvt.Metric)
-						}
-					}
-				}
+				printSuggestion(q.Name, suggestion)
+				dbStore.Save(&store.Event{
+					Timestamp:  time.Now().Format(time.RFC3339),
+					Metric:     q.Name,
+					Value:      value,
+					ZScore:     anomaly.ZScore,
+					Severity:   suggestion.Severity,
+					Diagnosis:  suggestion.Diagnosis,
+					Commands:   suggestion.Commands,
+					Fix:        suggestion.LongTermFix,
+					Confidence: suggestion.Confidence,
+				})
 			}
 		}
-
 	}
 
 	return nil
+}
+
+func printSuggestion(metricName string, s sysinfo.Suggestion) {
+    width := 74
+
+    sevColor := color.YellowString
+    if s.Severity == "high" || s.Severity == "critical" {
+        sevColor = color.RedString
+    } else if s.Severity == "low" {
+        sevColor = color.CyanString
+    }
+
+    fmt.Printf("\n  ┌─ %s ─\n", color.RedString("🔴 ANOMALY: %s", metricName))
+    fmt.Printf("  │  %-12s : %s\n", "Severity", sevColor(strings.ToUpper(s.Severity)))
+    fmt.Printf("  │  %-12s : %s\n", "Diagnosis", s.Diagnosis)
+
+    if len(s.Commands) > 0 {
+        fmt.Printf("  │  %-12s :\n", "Commands")
+        for _, cmd := range s.Commands {
+            fmt.Printf("  │    %s %s\n", color.YellowString("$"), cmd)
+        }
+    }
+
+    if s.LongTermFix != "" {
+        fmt.Printf("  │  %-12s : %s\n", "Long term", s.LongTermFix)
+    }
+
+    confStr := color.GreenString("%.0f%%", s.Confidence*100)
+    if s.Confidence < 0.5 {
+        confStr = color.RedString("%.0f%%", s.Confidence*100)
+    } else if s.Confidence < 0.8 {
+        confStr = color.YellowString("%.0f%%", s.Confidence*100)
+    }
+    fmt.Printf("  │  %-12s : %s\n", "Confidence", confStr)
+    fmt.Printf("  └%s\n\n", strings.Repeat("─", width))
 }

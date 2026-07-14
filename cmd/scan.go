@@ -29,10 +29,10 @@ func runScan(cmd *cobra.Command, args []string) error {
 	d := detector.NewDetector(60)
 	anomaliesFound := false
 
-	for _, query := range queries {
-		fmt.Printf("  Checking: %s\n", query)
+	for _, q := range queries {
+		fmt.Printf("  Checking: %s\n", q.Name)
 
-		samples, err := client.Query(query)
+		samples, err := client.Query(q.PromQL)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ⚠️  Failed to query: %v\n", err)
 			continue
@@ -45,8 +45,8 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 		value := samples[0].Value
 
-		d.Observe(query, value)
-		anomaly := d.Check(query, value)
+		d.Observe(q.PromQL, value)
+		anomaly := d.Check(q.PromQL, value)
 
 		if anomaly == nil {
 			fmt.Printf("  ✓  OK (value: %.4f)\n", value)
