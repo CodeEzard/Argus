@@ -2,6 +2,7 @@ package detector
 
 import (
 	"math"
+	"time"
 )
 
 // Anomaly represents a detected problem in a metric.
@@ -15,10 +16,9 @@ type Anomaly struct {
 // Detector holds a rolling window of past values for a metric.
 // This is how we establish "what's normal" without any external config.
 type Detector struct {
-	// map of metric name -> ring buffer of recent values
-	history map[string][]float64
-	// how many data points to keep per metric
-	windowSize int
+    history    map[string][]float64
+    timestamps map[string][]time.Time
+    windowSize int
 }
 
 // NewDetector creates a Detector with a given window size.
@@ -26,22 +26,29 @@ type Detector struct {
 func NewDetector(windowSize int) *Detector {
 	return &Detector{
 		history:    make(map[string][]float64),
+		timestamps: make(map[string][]time.Time),
 		windowSize: windowSize,
 	}
 }
 
 // Observe records a new value for a metric. Call this every poll cycle.
 func (d *Detector) Observe(metricName string, value float64) {
-	buf := d.history[metricName]
-	buf = append(buf, value)
+    // values
+    buf := d.history[metricName]
+    buf = append(buf, value)
+    if len(buf) > d.windowSize {
+        buf = buf[len(buf)-d.windowSize:]
+    }
+    d.history[metricName] = buf
 
-	// Keep only the last windowSize values — sliding window
-	if len(buf) > d.windowSize {
-		buf = buf[len(buf)-d.windowSize:]
-	}
-	d.history[metricName] = buf
+    // timestamps — same window, same index
+    ts := d.timestamps[metricName]
+    ts = append(ts, time.Now())
+    if len(ts) > d.windowSize {
+        ts = ts[len(ts)-d.windowSize:]
+    }
+    d.timestamps[metricName] = ts
 }
-
 // Check returns an Anomaly if the latest value is unusual, or nil if normal.
 // We need at least 10 data points before we can say anything meaningful.
 func (d *Detector) Check(metricName string, currentValue float64) *Anomaly {

@@ -66,7 +66,7 @@ func runWatch(cmd *cobra.Command, args []string) error {
 
 			value := samples[0].Value
 			d.Observe(q.PromQL, value)
-			anomaly := d.Check(q.PromQL, value)
+			anomaly := d.CheckMulti(q.PromQL, value)
 
 			if anomaly == nil {
 				fmt.Printf("  %s  %-20s  %.2f%%\n",
@@ -79,19 +79,19 @@ func runWatch(cmd *cobra.Command, args []string) error {
 
 			// anomaly line
 			fmt.Printf("  %s  %-20s  %.2f%%    %s\n",
-				color.RedString("✗"),
-				color.RedString(q.Name),
-				value,
-				color.YellowString("[ANOMALY — z-score: %.2f]", anomaly.ZScore),
+    			color.RedString("✗"),
+    			color.RedString(q.Name),
+   				value,
+    			color.YellowString("[%s — z-score: %.2f]", signalKinds(anomaly.Signals), getZScore(anomaly.Signals)),
 			)
 
 			// call LLM
 			trigger := sysinfo.AnomalousMetric{
-				Name:         q.Name,
-				CurrentValue: value,
-				ZScore:       anomaly.ZScore,
-				Severity:     anomaly.Severity,
-				DetectedAt:   time.Now(),
+    			Name:         q.Name,
+    			CurrentValue: anomaly.Value,
+    			ZScore:       getZScore(anomaly.Signals),
+    			Severity:     anomaly.Severity,
+    			DetectedAt:   time.Now(),
 			}
 			snap := sysinfo.Collect(trigger, []sysinfo.AnomalousMetric{})
 			provider := &llm.OllamaProvider{Model: "llama3.2:3b"}
@@ -106,7 +106,7 @@ func runWatch(cmd *cobra.Command, args []string) error {
 					Timestamp:  time.Now().Format(time.RFC3339),
 					Metric:     q.Name,
 					Value:      value,
-					ZScore:     anomaly.ZScore,
+					ZScore:     getZScore(anomaly.Signals),
 					Severity:   suggestion.Severity,
 					Diagnosis:  suggestion.Diagnosis,
 					Commands:   suggestion.Commands,
@@ -153,4 +153,21 @@ func printSuggestion(metricName string, s sysinfo.Suggestion) {
     }
     fmt.Printf("  │  %-12s : %s\n", "Confidence", confStr)
     fmt.Printf("  └%s\n\n", strings.Repeat("─", width))
+}
+
+func getZScore(signals []detector.Signal) float64 {
+    for _, s := range signals {
+        if s.Kind == "zscore" {
+            return s.Value
+        }
+    }
+    return 0
+}
+
+func signalKinds(signals []detector.Signal) string {
+    kinds := make([]string, len(signals))
+    for i, s := range signals {
+        kinds[i] = s.Kind
+    }
+    return strings.Join(kinds, " + ")
 }
