@@ -2,8 +2,8 @@ package sysinfo
 
 import (
 	"fmt"
-	"strings"
 	"sort"
+	"strings"
 )
 
 func BuildPrompt(snap ContextSnapshot) string {
@@ -22,41 +22,40 @@ func BuildPrompt(snap ContextSnapshot) string {
 	fmt.Fprintf(&b, "DETECTION SIGNALS:\n")
 	fmt.Fprintf(&b, "DETECTION SIGNALS:\n")
 	for _, sig := range snap.TriggerAnomaly.Signals {
-	    switch sig {
-	    case "zscore":
-	        fmt.Fprintf(&b, "  - Z-Score spike detected\n")
-	    case "trend":
-	        fmt.Fprintf(&b, "  - Upward trend detected\n")
-	    case "rate_of_change":
-	        fmt.Fprintf(&b, "  - Rapid rate of change detected\n")
-	    }
+		switch sig {
+		case "zscore":
+			fmt.Fprintf(&b, "  - Z-Score spike detected\n")
+		case "trend":
+			fmt.Fprintf(&b, "  - Upward trend detected\n")
+		case "rate_of_change":
+			fmt.Fprintf(&b, "  - Rapid rate of change detected\n")
+		}
 	}
 	fmt.Fprintf(&b, "\n")
 
 	// Section 2 — correlated metrics
 	fmt.Fprintf(&b, "CORRELATED ANOMALIES (sorted by detection time):\n")
 	sort.Slice(snap.CorrelatedMetrics, func(i, j int) bool {
-    	return snap.CorrelatedMetrics[i].DetectedAt.Before(snap.CorrelatedMetrics[j].DetectedAt)
+		return snap.CorrelatedMetrics[i].DetectedAt.Before(snap.CorrelatedMetrics[j].DetectedAt)
 	})
 	for _, metric := range snap.CorrelatedMetrics {
-	    fmt.Fprintf(&b, "  - %s | value: %.4f | z-score: %.2f | severity: %s | detected: %s\n",
-	        metric.Name,
-	        metric.CurrentValue,
-    	    metric.ZScore,
-        	metric.Severity,
-        	metric.DetectedAt.Format("15:04:05"),
-    	)
+		fmt.Fprintf(&b, "  - %s | value: %.4f | z-score: %.2f | severity: %s | detected: %s\n",
+			metric.Name,
+			metric.CurrentValue,
+			metric.ZScore,
+			metric.Severity,
+			metric.DetectedAt.Format("15:04:05"),
+		)
 	}
 	fmt.Fprintf(&b, "\n")
 
 	// Section 3 — running processes
 	fmt.Fprintf(&b, "RUNNING SERVICES (Docker containers):\n")
 	for _, process := range snap.SystemInfo.Processes {
-    	fmt.Fprintf(&b, "  - %s (Docker container, currently running)\n", process)
+		fmt.Fprintf(&b, "  - %s (Docker container, currently running)\n", process)
 	}
 	fmt.Fprintf(&b, "\n")
-	fmt.Fprintf(&b, "NOTE: These are Docker containers, not systemd services. Do not suggest systemctl commands for them.\n\n")
-
+	fmt.Fprintf(&b, "NOTE: These are Docker containers on a Linux host. Suggest specific Linux and Docker commands relevant to the anomalous metric, not generic container restarts.\n\n")
 	// Section 4 — instruction
 	fmt.Fprintf(&b, "IMPORTANT: Respond with ONLY a JSON object. No markdown, no backticks, no extra text.\n")
 	fmt.Fprintf(&b, "The JSON must have exactly these fields with exactly these types:\n")
