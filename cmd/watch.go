@@ -82,18 +82,39 @@ func runWatch(cmd *cobra.Command, args []string) error {
     			color.RedString("✗"),
     			color.RedString(q.Name),
    				value,
-    			color.YellowString("[%s — z-score: %.2f]", signalKinds(anomaly.Signals), getZScore(anomaly.Signals)),
+    			color.YellowString("[%s — z-score: %.2f]", strings.Join(signalKinds(anomaly.Signals), " + "), getZScore(anomaly.Signals)),
 			)
 
 			// call LLM
+			triggerTime := time.Now()
+			correlated := d.FindCorrelated(q.PromQL, triggerTime)
+
+			// convert to sysinfo.AnomalousMetric slice
+			var correlatedMetrics []sysinfo.AnomalousMetric
+			for _, pair := range correlated {
+			    friendlyName := pair.MetricB
+			    for _, mq := range queries {
+			        if mq.PromQL == pair.MetricB {
+			            friendlyName = mq.Name
+			            break
+			        }
+			    }
+			    correlatedMetrics = append(correlatedMetrics, sysinfo.AnomalousMetric{
+			        Name:       friendlyName,
+			        Severity:   pair.Relation,
+			        DetectedAt: triggerTime.Add(-pair.TimeDelta),
+			    })
+			}
 			trigger := sysinfo.AnomalousMetric{
     			Name:         q.Name,
-    			CurrentValue: anomaly.Value,
-    			ZScore:       getZScore(anomaly.Signals),
-    			Severity:     anomaly.Severity,
-    			DetectedAt:   time.Now(),
+			    CurrentValue: anomaly.Value,
+			    ZScore:       getZScore(anomaly.Signals),
+			    Severity:     anomaly.Severity,
+			    DetectedAt:   triggerTime,
+				Signals:      signalKinds(anomaly.Signals),
 			}
-			snap := sysinfo.Collect(trigger, []sysinfo.AnomalousMetric{})
+
+			snap := sysinfo.Collect(trigger, correlatedMetrics)
 			provider := &llm.OllamaProvider{Model: "llama3.2:3b"}
 			llmClient := llm.NewClient(provider)
 			suggestion, err := llmClient.Diagnose(snap)
@@ -101,6 +122,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				fmt.Printf("\n  %s Could not get LLM diagnosis: %v\n\n", color.YellowString("⚠️ "), err)
 			} else {
+				// print observation
+				observation := sysinfo.Observe(snap)
+				fmt.Printf("\n  📋 %s\n", strings.ReplaceAll(observation, "\n", "\n  "))
 				printSuggestion(q.Name, suggestion)
 				dbStore.Save(&store.Event{
 					Timestamp:  time.Now().Format(time.RFC3339),
@@ -164,10 +188,11 @@ func getZScore(signals []detector.Signal) float64 {
     return 0
 }
 
-func signalKinds(signals []detector.Signal) string {
+func signalKinds(signals []detector.Signal) []string {
     kinds := make([]string, len(signals))
     for i, s := range signals {
         kinds[i] = s.Kind
     }
-    return strings.Join(kinds, " + ")
+    return kinds
 }
+

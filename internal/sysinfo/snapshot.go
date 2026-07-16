@@ -16,7 +16,9 @@ type AnomalousMetric struct {
     ZScore       float64
     Severity     string
     DetectedAt   time.Time
+    Signals      []string  // which detectors fired: "zscore", "trend", "rate_of_change"
 }
+
 
 type SystemInfo struct {
     Hostname  string

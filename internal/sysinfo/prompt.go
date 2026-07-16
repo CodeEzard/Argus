@@ -15,7 +15,23 @@ func BuildPrompt(snap ContextSnapshot) string {
 	fmt.Fprintf(&b, "  Metric   : %s\n", snap.TriggerAnomaly.Name)
 	fmt.Fprintf(&b, "  Value    : %.4f\n", snap.TriggerAnomaly.CurrentValue)
 	fmt.Fprintf(&b, "  Z-Score  : %.2f\n", snap.TriggerAnomaly.ZScore)
-	fmt.Fprintf(&b, "  Severity : %s\n\n", snap.TriggerAnomaly.Severity)
+	fmt.Fprintf(&b, "  Severity : %s\n", snap.TriggerAnomaly.Severity)
+	fmt.Fprintf(&b, "  Detected : %s\n\n", snap.TriggerAnomaly.DetectedAt.Format("15:04:05"))
+
+	// Section 1.5 — which detectors fired
+	fmt.Fprintf(&b, "DETECTION SIGNALS:\n")
+	fmt.Fprintf(&b, "DETECTION SIGNALS:\n")
+	for _, sig := range snap.TriggerAnomaly.Signals {
+	    switch sig {
+	    case "zscore":
+	        fmt.Fprintf(&b, "  - Z-Score spike detected\n")
+	    case "trend":
+	        fmt.Fprintf(&b, "  - Upward trend detected\n")
+	    case "rate_of_change":
+	        fmt.Fprintf(&b, "  - Rapid rate of change detected\n")
+	    }
+	}
+	fmt.Fprintf(&b, "\n")
 
 	// Section 2 — correlated metrics
 	fmt.Fprintf(&b, "CORRELATED ANOMALIES (sorted by detection time):\n")
